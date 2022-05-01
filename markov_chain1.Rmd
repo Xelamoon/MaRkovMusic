@@ -1,0 +1,384 @@
+---
+title: "Markov Chain Music"
+output: html_notebook
+---
+
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r setup}
+library(reticulate)
+library(tidyverse)
+#library(markovchain) did not work correctly unfortunately
+```
+
+
+
+```{python general prep - song selection}
+from music21 import *
+import pandas as pd
+
+s2 = converter.parse('/Users/alk/Downloads/Akkord.mid')
+partStream = s2.parts.stream()
+
+print("List of instruments and time signatures found on MIDI file:") #gets us instruments
+  for p in partStream:
+      print (p.partName)
+      print(list(p[meter.TimeSignature]))
+      
+partlist = list([p.partName for p in partStream])
+tempolist = list(s2.metronomeMarkBoundaries())
+
+def teilDaten(k, myStream): #k for the part and myStream and object like parts.stream()
+    s32 = list([note.fullName for note in myStream[k].recurse().notesAndRests])
+    s34 = list([note.quarterLength for note in myStream[k].recurse().notesAndRests])
+  
+    diemusik = pd.DataFrame({'AllThings':s32,'dauer':s34} )
+    return diemusik
+
+print("Over to R")
+
+#abc = teilDaten(0, partStream) just a test
+```
+
+
+
+```{r }
+m21 <- reticulate::import('music21')
+
+
+instrumente <- py$partlist #check the instruments and modify them to fit music21 instruments list https://web.mit.edu/music21/doc/moduleReference/moduleInstrument.html
+#instrumente[1] <-"StringInstrument"; instrumente[2] <-"StringInstrument"; instrumente[3] <-"Piano"; instrumente[4] <-"Bass"; #Keep in mind R starts with 1 Python 0 Midi 1
+print(instrumente)
+
+instrumente[1] <- "Piano";# instrumente[2] <- "Piano"
+
+print(py$tempolist) #print to get tempo markings, choose 1 for convenience
+
+original <- py$s2
+bach <- original$parts$stream() 
+
+
+
+k <- 0L # L after number to ensure integer not float
+```
+
+
+```{r Functions for n1 and n2}
+CreatePart <- function(transition_markov,sl,k){
+  i <- 1
+  ms <- m21$stream$Measure()
+  temps<- c("n1", "dur", "oct", "pit")
+  
+  while(i <= sl) {
+    past <- current
+    current  <- sample(uniques$AllThings, 1, prob = transition_markov[past,])
+    
+    if(word(current,-1) == 'Note'|| word(current,1)== 'Chord'){
+      
+      
+      if(word(current,1)== 'Chord'){
+        chordz <- str_extract(current, '(?<=\\{)[^\\}]+') 
+        chordz <- str_split(chordz, '\\|', simplify = TRUE)
+        chordz <- trimws(chordz)
+        
+        dur <- uniques[which(uniques==current),2]
+        oct <- str_extract(chordz[1,], "\\d+")
+        
+        pit <- c(1:length(chordz))
+        for(j in 1:length(chordz)) {
+          pit[j] <- word(chordz[1,j], 1)
+          if(grepl('sharp',pit[j]) == TRUE){
+            pit[j] <- gsub("-sharp", "#", pit[j])
+            
+          }else if (grepl('flat',pit[j]) == TRUE){
+            pit[j] <- gsub("-flat", "-", pit[j])
+          }
+          
+        }#for j-loop 
+        
+        n1 <- m21$chord$Chord(paste(pit,oct,sep="",collapse = " "))
+        n1$quarterLength <- dur
+        
+        rm(chordz)
+      } #belongs to Chord
+      
+      else{
+        ## Creates the Note could run this as its own function, actually might look cleaner
+        dur <- uniques[which(uniques==current),2]
+        oct <- str_extract(current, "\\d+")
+        
+        pit <- word(current, 1)
+        if(grepl('sharp',pit) == TRUE){
+          pit <- gsub("-sharp", "#", pit)
+          
+        }else if (grepl('flat',pit) == TRUE){
+          pit <- gsub("-flat", "-", pit)
+        }
+        
+        n1 <- m21$note$Note(paste0(pit,oct))  #Create the new note
+        n1$quarterLength <- dur
+        
+      }
+      
+    }else if(word(current,-1) == 'Rest'){
+      dur <- uniques[which(uniques==current),2]
+      n1 <- m21$note$Rest()
+      n1$duration$quarterLength <- dur
+    }
+    
+    ms$append(n1)
+    suppressWarnings(rm(list = temps))
+    i <- i +1 
+  }#belongs to while 
+  
+  teil <- m21$stream$Part()
+  tsPart <- m21$meter$TimeSignature('4/4')
+  
+  teil$append(tsPart)
+  teil$append(ms)
+  #teil$insert(k,m21$instrument$Piano())
+  teil$insert(k,m21$instrument[[instrumente[k+1]]]())
+  
+  
+  return(teil)
+}
+
+
+CreatePart2 <- function(transition_markov,sl,k){
+  i <- 1
+  ms <- m21$stream$Measure()
+  temps<- c("n1", "dur", "oct", "pit")
+  
+  while(i <= sl) {
+    #print(mitvergangenheit)
+    vergangenheit <- mitvergangenheit
+    mitvergangenheit  <- current
+    print(mitvergangenheit)
+    
+    past <- paste(vergangenheit ,mitvergangenheit, sep="_")
+    print(is.na(transition_markov[past,1])==TRUE)
+    
+    while(is.na(transition_markov[past,1])==TRUE){
+      vergangenheit <- mitvergangenheit
+      mitvergangenheit <- sample(uniques$AllThings, 1)
+      past <- paste(vergangenheit ,mitvergangenheit, sep="_")
+    }
+    
+    current  <- sample(uniques$AllThings, 1, prob = transition_markov[past,])
+    
+    if(word(current,-1) == 'Note'|| word(current,1)== 'Chord'){
+      
+      
+      if(word(current,1)== 'Chord'){
+        chordz <- str_extract(current, '(?<=\\{)[^\\}]+') 
+        chordz <- str_split(chordz, '\\|', simplify = TRUE)
+        chordz <- trimws(chordz) # due to split 1 whitespace before n>1 entries
+        
+        dur <- uniques[which(uniques==current),2]
+        oct <- str_extract(chordz[1,], "\\d+")
+        
+        pit <- c(1:length(chordz))
+        for(j in 1:length(chordz)) {
+          pit[j] <- word(chordz[1,j], 1)
+          if(grepl('sharp',pit[j]) == TRUE){
+            pit[j] <- gsub("-sharp", "#", pit[j])
+            
+          }else if (grepl('flat',pit[j]) == TRUE){
+            pit[j] <- gsub("-flat", "-", pit[j])
+          }
+          
+        }#for j-loop 
+        
+        n1 <- m21$chord$Chord(paste(pit,oct,sep="",collapse = " "))
+        n1$quarterLength <- dur
+        
+        rm(chordz)
+      } #belongs to Chord
+      
+      else{
+        ## Creates the Note could run this as its own function, actually might look cleaner
+        dur <- uniques[which(uniques==current),2]
+        oct <- str_extract(current, "\\d+")
+        
+        pit <- word(current, 1)
+        if(grepl('sharp',pit) == TRUE){
+          pit <- gsub("-sharp", "#", pit)
+          
+        }else if (grepl('flat',pit) == TRUE){
+          pit <- gsub("-flat", "-", pit)
+        }
+        
+        n1 <- m21$note$Note(paste0(pit,oct))  #Create the new note
+        n1$quarterLength <- dur
+        
+      }
+      
+    }else if(word(current,-1) == 'Rest'){
+      dur <- uniques[which(uniques==current),2]
+      n1 <- m21$note$Rest()
+      n1$duration$quarterLength <- dur
+    }
+    
+    ms$append(n1)
+    suppressWarnings(rm(list = temps))
+    i <- i +1 
+  }#belongs to while 
+  
+  teil <- m21$stream$Part()
+  tsPart <- m21$meter$TimeSignature('4/4')
+  
+  teil$append(tsPart)
+  teil$append(ms)
+  teil$insert(k,m21$instrument[[instrumente[k+1]]]()) #sets the k-th instrument of the instrument vector in the k-th part
+  
+  return(teil)
+}
+```
+
+
+Now we can either create a score with n=1 or n=2 
+
+```{r n1}  
+fasterpiece <- m21$stream$Score(m21$tempo$MetronomeMark(number=120)) #initialize fasterpiece set tempo to chosen one
+
+while (k < length(instrumente)) {
+  herz <- py$teilDaten(k,bach) 
+  herz %>% mutate(dauer = as.numeric(as.character(dauer))) %>% drop_na() -> herz # Remove Tuplets and Triplets because they are difficult to deal with
+
+  uniques <- data.frame(unique(herz)) # Throws an error but works
+  base_matrix <- data.frame(matrix(data = 0, nrow= base::nrow(unique(herz)),ncol= base::nrow(unique(herz))))
+  names(base_matrix) <- uniques$AllThings ;rownames(base_matrix) <- uniques$AllThings
+  
+  
+  
+  n=1;i=1
+  while(i < nrow(herz)- n +1){   #populate base matrix
+  
+    current = herz[i+n,1]
+    past = herz[i,1]
+    
+    base_matrix[past, current] <- base_matrix[past, current] + 1 
+    
+    i <- i +1 
+  }
+  rm(i)
+  
+  prob_mat <- base_matrix/rowSums(base_matrix)
+  prob_mat <- na.omit(prob_mat)
+  
+  for(o in length(diag(as.matrix(prob_mat[,-1])))){if(diag(as.matrix(prob_mat[,-1]))[o] == TRUE){print("Warning possible absorbing state.")}}
+  # There could be an absorbing state but maybe it will not matter.
+  
+  current <- sample(uniques$AllThings,1)
+  sl <- 200 # song length
+  
+  teil <- CreatePart(prob_mat,sl,k)
+  fasterpiece$insert(k, teil)
+     
+  k <- k+1L
+}#belongs to while
+
+
+fasterpiece$write("midi", fp='/Users/alk/Downloads/fasterpiece_floh.mid')
+
+
+
+  
+
+
+
+
+
+
+```
+
+```{r n2}
+   
+
+fasterpiece2 <- m21$stream$Score(m21$tempo$MetronomeMark(number=120)) # set the tempo to your chosen one
+
+while (k < length(instrumente)) {
+  herz <- py$teilDaten(k,bach) 
+  herz %>% mutate(dauer = as.numeric(as.character(dauer))) %>% drop_na() -> herz # Remove Tuplets and Triplets because they are difficult to deal with
+  uniques <- data.frame(unique(herz))
+
+  #extra step for n=2 basically the same for all n>2
+  df2<- expand.grid(a=uniques$AllThings, b=uniques$AllThings) %>% # create all m^n combinations, works the same for n=3 with a,b,c etc
+    unite('AllThings',a:b,sep = "_", remove = TRUE)
+  
+  base_matrix_2 <- data.frame(matrix(data = 0, nrow= base::nrow(df2),ncol= base::nrow(unique(herz))))
+  names(base_matrix_2) <- uniques$AllThings ;rownames(base_matrix_2) <- df2$AllThings
+  
+
+  
+  n=2; i=1
+  while(i < nrow(herz)- n +1){ #populate the base matrix
+  
+    current <- herz[i+n,1]
+    mitvergangenheit <- herz[i+n-1,1]
+    vergangenheit <- herz[i,1]
+    
+    
+    base_matrix_2[paste(vergangenheit,mitvergangenheit , sep="_"), current] <- base_matrix_2[paste(vergangenheit, mitvergangenheit, sep="_"), current] + 1 
+    
+    i <- i +1 
+  }
+  rm(i)
+  
+  prob_mat_2 <- base_matrix_2/rowSums(base_matrix_2); #new prob mat since some rows are now all 0 there will be naN.
+  prob_mat_2 <- na.omit(prob_mat_2) # drop Nan where whole row is 0
+  for(o in length(diag(as.matrix(prob_mat_2[,-1])))){if(diag(as.matrix(prob_mat[,-1]))[o] == TRUE){print("Warning possible absorbing state.")}}
+  # There could be an absorbing state but maybe it will not matter.
+  
+  
+  current <- sample(uniques$AllThings, 1, prob = prob_mat_2[paste(vergangenheit, mitvergangenheit, sep="_"),]) #starting point
+  sl <- 200
+  
+  teil <-CreatePart2(prob_mat_2,sl,k)
+  fasterpiece2$insert(k, teil)
+  
+  k <- k+1L
+}# while k loop
+
+
+fasterpiece2$write("midi", fp='/Users/alk/Downloads/fasterpiece2_floh.mid')
+```
+
+
+
+
+
+
+
+Hier noch ein paar ein Reperaturen zB ein absorbierender Zustand bzw Dinge die nicht gebraucht wurden.
+
+```{r repair ignore}
+row.names(prob_mat_mat)[49] <- "Chord {D in octave 3 | D in octave 4 | F in octave 4} Half_Quarter Rest"
+prob_mat_mat[49,7] <- 1
+
+if(is.na(transition_markov[paste(mitvergangenheit, vergangenheit , sep="_"),1])==FALSE){current  <- sample(uniques$AllThings, 1,prob =  transition_markov[paste(mitvergangenheit, vergangenheit , sep="_"),])
+}else if(is.na(transition_markov[paste(mitvergangenheit, vergangenheit , sep="_"),1])==TRUE){current  <- sample(uniques$AllThings, 1)}
+      #if absorbing take flipped sample else if random sample 
+
+if(is.na(transition_markov[paste(mitvergangenheit, vergangenheit , sep="_"),1])==FALSE){current  <- sample(uniques$AllThings, 1,prob =  transition_markov[paste(mitvergangenheit, vergangenheit , sep="_"),])} 
+
+      if(is.na(transition_markov[paste(mitvergangenheit, vergangenheit , sep="_"),1])==TRUE){current  <- sample(uniques$AllThings, 1)}
+```
+
+
+```{r things that aren't needed but incase; For now IGNORE}
+
+
+#myname <- names(herz)
+#herz %>% rename(AllThings = myname) -> herz
+#df <- tibble(unique(herz))
+
+
+#str_extract(tiednote, "\\(([^)]*)\\)") # with (
+#str_extract(tiednote, "(?<=\\().*?(?=\\))") #without ()
+#eval(parse(text = word(str_extract(tiednote, "(?<=\\().*?(?=\\))"),1))) 
+
+```
+
